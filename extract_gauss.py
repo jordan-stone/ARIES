@@ -3,13 +3,14 @@ from ARIES.trace import *
 import pdb
 #Extraction object
 class order:
-    def __init__(self,im,center,centroid_width=10,optimize=False):
+    def __init__(self,im,center,nsources=1,centroid_width=10,optimize=False):
         '''Given the full dewarped array (im), focus on a single order
            centered on "center" with total width=centroid_width. 
            Optionally optimize "center" (explore from down by three
            pixels to up by three pixels) by maximizing the total flux
            in the extracted order. This can fail if the noise outside 
            of the true order is of large amplitude.'''
+        self.nsources=nsources
         self.im=im
         self.centroid_width=centroid_width
         self.num_rows,self.num_cols=self.im.shape
@@ -34,7 +35,7 @@ class order:
         '''Display the extracted order with a logarithmic scaling, 
            and a 1:2 aspect ratio.'''
         aratio=0.5*self.order.shape[1]/float(self.order.shape[0])
-        self.order_ax=jFits.jDisplay(self.order,\
+        return jFits.jDisplay(self.order,\
                                      subplot=111,\
                                      log=True,\
                                      aspect=aratio)
@@ -49,6 +50,7 @@ class order:
                       bins=len(self.profile),\
                       edgecolor='k',\
                       facecolor='none')
+        return a
 
     def get_profile_params(self,profile,nsources=1,params=[]):
         if len(params)==0:
@@ -78,7 +80,7 @@ class order:
             top=len(self.profile)
         return p, bot, top
     
-    def extract(self,save_summary_fig_name=None,show=True,nsources=1,plot_second=False):
+    def extract(self,nsources=1):
         '''Perform the spectral extraction on the selected order. A multi-gaussian model
            is used to fit the flux in each column of the order. Note that nsources can 
            be one. Since self.profile represents an average profile (i.e. with higher S/N)
@@ -90,84 +92,80 @@ class order:
            spectra) will be produced. All of the extracted components can then be saved 
            using methods of self specific to the task.'''        
         #generate naive guesses for fit to profile...
-        p, self.bot, self.top =self.get_profile_params(self.profile,nsources=nsources)
-
+        self.p, self.bot, self.top =self.get_profile_params(
+                                           self.profile,nsources=self.nsources)
         #Now perform a gaussian fit to each column of the order to extract the (spatial, flux
         #and sigma) spectra. the flux spectra will be the sum of the flux within 2 sigma of the
         #center after subtracting the gaussian model for the other source (if it exists).
         amp=[]
         spatial=[]
         sigma=[]
-        models=np.empty((nsources,)+self.order.shape)
-        print "Extracting"
-        print p
+        models=np.empty((self.nsources,)+self.order.shape)
         for col in xrange(self.order.shape[1]):
             snip=(self.order[:,col])[self.bot:self.top]
             pos_inds=(snip>=0)
             if pos_inds.sum() < 3:
-                pc=np.array(nsources*3*[-999])
+                pc=np.array(self.nsources*3*[-999])
             else:
                 pc,mc,ec,xc=gaussfitter.multigaussfit(np.arange(len(snip))[pos_inds],
                                                       snip[pos_inds],
-                                                      ngauss=nsources,
-                                                      params=p)
-        
+                                                      ngauss=self.nsources,
+                                                      params=self.p)
                 pc[1::3]=np.where(pc[1::3]>0,pc[1::3],0)#centers
                 pc[1::3]=np.where(pc[1::3]<len(self.profile),pc[1::3],len(self.profile))
-
             #enforce ordering so that lower source is listed first (sources could have
             #switched during the fitting process)
             sort_inds=np.argsort(pc[1::3])
             amp.append     (pc[0::3][sort_inds])
             spatial.append (pc[1::3][sort_inds])
             sigma.append   (pc[2::3][sort_inds])
-
             #create the model arrays. enforce the same sorting as above...
             model_tmp=[gaussfitter.onedgaussian(np.arange(self.order.shape[0]),
                                                 0,*pc[3*sort_inds[i]:3*(1+sort_inds[i])]) 
-                                                for i in xrange(nsources)]
+                                                for i in xrange(self.nsources)]
             models[:,:,col]=model_tmp
-
-        models=np.array(models)
+        self.models=np.array(models)
         #subtract the model of the other source from the image...
-        flux_spec=self.order[None,:,:]
-        if nsources==2:
-            flux_spec=self.order[None,:,:]-models[::-1,:,:]
-        mod_subtracted_profs=flux_spec.sum(axis=2)
+        self.model_subtracted_orders=self.order[None,:,:] #nsources=1
+        if self.nsources==2:
+            self.model_subtracted_orders=self.order[None,:,:]-self.models[::-1,:,:]
+        mod_subtracted_profs=self.model_subtracted_orders.sum(axis=2)
         flux_sum=[]
-        for i in xrange(nsources):
+        for i in xrange(self.nsources):
             psp,botsp,topsp=self.get_profile_params(mod_subtracted_profs[i])
-            flux_sum.append(flux_spec[i,botsp:topsp,:].sum(axis=0))
-
+            flux_sum.append(self.model_subtracted_orders[i,botsp:topsp,:].sum(axis=0))
         self.spectrum=np.array(zip(*flux_sum))
         self.amp=np.array(amp)
         self.spatial=np.array(spatial)
         self.sigma=np.array(sigma)
 
-        f=mpl.figure(figsize=(16,8))
 
+    def summary_im(self,save_summary_fig_name=None,show=True,plot_second=False):
+        self.f=mpl.figure(figsize=(16,8))
         if plot_second:
-            a2=f.add_subplot(223)#fspec
-            a3=f.add_subplot(322)#prof
-            a4=f.add_subplot(324)#sspec
-            a5=f.add_subplot(326)#second
+            a2=self.f.add_subplot(223)#fspec
+            a3=self.f.add_subplot(322)#prof
+            a4=self.f.add_subplot(324)#sspec
+            a5=self.f.add_subplot(326)#second
         else:
-            a2=f.add_subplot(223)
-            a3=f.add_subplot(222)
-            a4=f.add_subplot(224)
+            a2=self.f.add_subplot(223)
+            a3=self.f.add_subplot(222)
+            a4=self.f.add_subplot(224)
 
         aratio=0.5*self.order.shape[1]/float(self.order.shape[0])
-        a1=jFits.jDisplay(self.order,figure=f,subplot=221,log=True,aspect=aratio,show=show)
+        a1=jFits.jDisplay(self.order,figure=self.f,subplot=221,log=True,aspect=aratio,show=show)
 
         colors=('b','g')
-        for src in xrange(nsources):
+        for src in xrange(self.nsources):
             a2.plot(self.spectrum[:,src],color=colors[src])
         a2.set_xlim(0,self.spectrum.shape[0])
         try:
-            a2.set_ylim(0,min(0.2*self.spectrum[50:-50].mean(axis=0).max()+self.spectrum[50:-50].max(),
-                              2*self.spectrum[50:-50].mean(axis=0).max()))
+            lims=sorted((0,min(0.2*self.spectrum[50:-50].mean(axis=0).max()+self.spectrum[50:-50].max(),
+                              2*self.spectrum[50:-50].mean(axis=0).max())))
+            a2.set_ylim(*lims)
         except:
-            a2.set_ylim(0,0.2*self.spectrum.mean(axis=0).max()+self.spectrum.max())
+            lims=sorted((0,0.2*self.spectrum.mean(axis=0).max()+self.spectrum.max()))
+            a2.set_ylim(*lims)
             
 
         a3.hist(np.arange(len(self.profile[self.bot:self.top]))+self.bot,\
@@ -178,19 +176,19 @@ class order:
        # a3.plot(range(len(self.fit_prof)),m[self.bot:self.top])
 
         self.g=[]
-        for i in xrange(nsources):
+        for i in xrange(self.nsources):
             self.g.append(
                 gaussfitter.onedgaussian(
-                    np.arange(len(self.profile[self.bot:self.top]))+self.bot,0,*p[3*i:3*(1+i)]))
+                    np.arange(len(self.profile[self.bot:self.top]))+self.bot,0,*self.p[3*i:3*(1+i)]))
             a3.plot(np.arange(len(self.profile[self.bot:self.top]))+self.bot,self.g[-1],color=colors[i])
 
-        for src in xrange(nsources):
+        for src in xrange(self.nsources):
             a4.plot(self.spatial[:,src],color=colors[src])
         a4.set_xlim(0,self.spatial.shape[0])
         a4.set_ylim(self.spatial.mean(axis=0).min()-0.5,self.spatial.mean(axis=0).max()+0.5)
 
         if plot_second:
-            for src in xrange(nsources):
+            for src in xrange(self.nsources):
                 a5.plot(self.sigma[:,src])
             a5.set_xlim(0,self.spatial.shape[0])
             try:
@@ -233,40 +231,24 @@ class order:
         self.order=self.im[self.order_lims]
         self.profile=self.order.sum(axis=1)/self.order.sum()
 
-    def save_flux_spectrum(self,fname,x=None):
+    def save_data(self,fname,save='flux',x=None):
+        ''' save must be one of "flux", "spatial", "profile", "sigma", or "second"'''
+        dat_dict={'flux':self.spectrum,
+                  'spatial':self.spatial,
+                  'profile':self.profile,
+                  'sigma':self.sigma,
+                  'second':self.sigma}
+        key=[k for k in dat_dict.keys() if k.startswith(save)][0]
+        data=dat_dict[key]
         fo=open(fname,'w')
         if x is not None:
             fo.write('lambda,f\n')
-            for p in zip(x,self.spectrum):
-                fo.write('%f %f\n' % (p[:1]+tuple(p[1])))
+            for p in zip(x,data):
+                fo.write('%f '*(1+len(p[1]) % (p[:1]+tuple(p[1]))+'\n'))
         else:
             fo.write('pix, f\n')
-            for i,f in enumerate(self.spectrum):
-                fo.write('%i %f\n' % ((i,)+tuple(f)))
-        fo.close()
-
-    def save_spatial_spectrum(self,fname,x=None):
-        fo=open(fname,'w')
-        if x is not None:
-            fo.write('x,f\n')
-            for p in zip(x,self.spatial):
-                fo.write('%f %f\n' % (p[0:1]+tuple(p[1])))
-        else:
-            fo.write('pix, f\n')
-            for i,f in enumerate(self.spatial):
-                fo.write('%i %f\n' % ((i,)+tuple(f)))
-        fo.close()
-
-    def save_profile(self,fname,x=None):
-        fo=open(fname,'w')
-        if x is not None:
-            fo.write('x,f\n')
-            for p in zip(x,self.profile):
-                fo.write('%f %f\n' % (p[0:1]+tuple(p[1])))
-        else:
-            fo.write('pix, f\n')
-            for i,f in enumerate(self.profile):
-                fo.write('%i %f\n' % ((i,)+tuple(f)))
+            for i,f in enumerate(data):
+                fo.write('%i ' % i + ('%f '*len(f)) % tuple(f) + '\n')
         fo.close()
 
     def save_order(self,fname):
