@@ -22,13 +22,34 @@ def get_dewarp_coefficients(traces,onto_xy='x',fit_degree=3,dewarp_degree=5):
     coefs=poly2d.polyfit2d_transform(in_xs,fit_ys,out_xs,out_ys,order=dewarp_degree)
     return coefs
 
-def dewarp(im,dewarp_coefs,return_yoffset=False):
+def get_inverse_dewarp_coefficients(traces,onto_xy='x',fit_degree=3,dewarp_degree=5):
+    in_xs=[]
+    in_ys=[]
+    out_xs=[]
+    out_ys=[]
+
+    print 'Polyfitting each trace and making polyfit2d_transform inputs...'
+    for t in traces:
+        x,y=unzip(t)
+        out_xs.extend(x)
+        p=np.polyfit(x,y,fit_degree)
+        fit_y=np.polyval(p,x)
+        out_ys.extend(fit_y)
+        inx,iny=unroll_trace(t,onto_xy=onto_xy,degree=fit_degree)
+        in_xs.extend(inx)
+        in_ys.extend(iny)
+
+    print 'Getting transform coefficients...'
+    coefs=poly2d.polyfit2d_transform(in_xs,in_ys,out_xs,out_ys,order=dewarp_degree)
+    return coefs
+
+def dewarp(im,dewarp_coefs,return_yoffset=False,yoffset=0,xoffset=0):
     transformer=poly2d.poly2d_transform(*dewarp_coefs)
 
     print 'dewarping...(this step takes a bit)'
     inds=np.indices(im.shape)
 
-    tx,ty=transformer(inds[1].flatten(),inds[0].flatten())
+    tx,ty=transformer(inds[1].flatten()-xoffset,inds[0].flatten()-yoffset)
     print transformer
     xw=np.rint(tx.max()-tx.min())
     yw=np.rint(ty.max()-ty.min())

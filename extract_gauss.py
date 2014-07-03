@@ -29,13 +29,14 @@ class order:
         first_slice=slice(None)
         self.order_lims=(zeroeth_slice,first_slice)
         self.order=self.im[self.order_lims]
-        self.profile=self.order.sum(axis=1)/self.order.shape[1]
+        self.bad_cols=np.any(np.isnan(self.order),axis=0)#columns with nan
+        self.profile=self.order[:,~self.bad_cols].sum(axis=1)/(~self.bad_cols).sum()
 
     def show_order(self):
         '''Display the extracted order with a logarithmic scaling, 
            and a 1:2 aspect ratio.'''
         aratio=0.5*self.order.shape[1]/float(self.order.shape[0])
-        return jFits.jDisplay(self.order,\
+        return jFits.jInteractive_Display(self.order,\
                                      subplot=111,\
                                      log=True,\
                                      aspect=aratio)
@@ -55,7 +56,7 @@ class order:
     def get_profile_params(self,profile,nsources=1,params=[]):
         if len(params)==0:
             params=sum(map(lambda n:
-                                    [1,self.order.shape[0]*(2*n+1)/float(2*nsources),1],
+                                    [np.max(profile)/2.,self.order.shape[0]*(2*n+1)/float(2*nsources),1],
                                     range(nsources)),
                                     [])
         p,m,e,x=gaussfitter.multigaussfit(range(len(profile)),
@@ -70,8 +71,8 @@ class order:
         dif=np.rint((profile_cent.max()+2*profile_width.max())-\
                     (profile_cent.min()-2*profile_width.max()))
 
-        bot=max(np.rint(profile_cent.mean())-np.rint(dif/2.),0)
-        top=min(np.rint(profile_cent.mean())+np.rint(dif/2.),len(profile))
+        bot=max(np.rint(profile_cent.mean()-dif/2.),0)
+        top=min(np.rint(profile_cent.mean()+dif/2.),len(profile))
         if bot > top:
             print "something's wrong self.bot>self.top. Entering debugger"
             pdb.set_trace()
@@ -106,6 +107,8 @@ class order:
             pos_inds=(snip>=0)
             if pos_inds.sum() < 3:
                 pc=np.array(self.nsources*3*[-999])
+            elif np.any(np.isnan(snip)):
+                pc=np.array(self.nsources*3*[-999])
             else:
                 pc,mc,ec,xc=gaussfitter.multigaussfit(np.arange(len(snip))[pos_inds],
                                                       snip[pos_inds],
@@ -131,26 +134,71 @@ class order:
             self.model_subtracted_orders=self.order[None,:,:]-self.models[::-1,:,:]
         mod_subtracted_profs=self.model_subtracted_orders.sum(axis=2)
         flux_sum=[]
+        self.extract_ranges=[]
         for i in xrange(self.nsources):
             psp,botsp,topsp=self.get_profile_params(mod_subtracted_profs[i])
             flux_sum.append(self.model_subtracted_orders[i,botsp:topsp,:].sum(axis=0))
+            self.extract_ranges.append((botsp,topsp))
         self.spectrum=np.array(zip(*flux_sum))
         self.amp=np.array(amp)
         self.spatial=np.array(spatial)
         self.sigma=np.array(sigma)
 
+    def rect_extract(self):
+        #generate naive guesses for fit to profile...
+        self.p, self.bot, self.top =self.get_profile_params(self.profile,nsources=1)
+        bottom_limit=max(np.int(np.floor(self.bot)+1),0)
+        top_limit=min(np.int(np.ceil(self.top))+1,len(self.profile-1))
+        self.extract_ranges=[(bottom_limit,top_limit)]
+        self.spectrum=self.order[bottom_limit:top_limit,:].sum(axis=0)[:,None]
+        self.spatial=None
+        self.sigma=None
 
-    def summary_im(self,save_summary_fig_name=None,show=True,plot_second=False):
+    def basic_binary_extract(self):
+        #generate naive guesses for fit to profile...
+        self.p, self.bot, self.top =self.get_profile_params(
+                                           self.profile,nsources=2)
+        #Now perform a gaussian fit to each column of the order to extract the (spatial, flux
+        #and sigma) spectra. the flux spectra will be the sum of the flux within 2 sigma of the
+        #center after subtracting the gaussian model for the other source (if it exists).
+        sort_inds=np.argsort(self.p[1::3])
+        cents=self.p[1::3][sort_inds]
+        sigmas=self.p[2::3][sort_inds]
+        order_mid=np.argmin(self.profile[slice(*np.rint(cents))])+np.rint(cents[0])
+        print 'order mid:'
+        print order_mid
+        self.extract_ranges=[]
+        mins=[0,order_mid]
+        maxs=[order_mid,len(self.profile)]
+        #round toward the center of the array, truncate toward the edges
+        max_funcs=[np.rint,np.int]
+        min_funcs=[np.int,np.rint]
+        for i in xrange(2):
+            bot=max(max_funcs[i](cents[i]-2*sigmas[i]),mins[i])
+            top=min(min_funcs[i](cents[i]+2*sigmas[i]),maxs[i])
+            self.extract_ranges.append((bot,top))
+
+        flux_sum=[]
+        for i in xrange(2):
+            flux_sum.append(self.order[slice(*self.extract_ranges[i]),:].sum(axis=0))
+        self.spectrum=np.array(zip(*flux_sum))
+        self.spatial=np.zeros_like(self.spectrum)
+        self.sigma=np.zeros_like(self.spectrum)
+
+    def summary_im(self,save_summary_fig_name=None,show=True,plot_first=True,plot_second=False,plot_extract_range=False):
         self.f=mpl.figure(figsize=(16,8))
-        if plot_second:
+        if plot_first and plot_second:
             a2=self.f.add_subplot(223)#fspec
             a3=self.f.add_subplot(322)#prof
             a4=self.f.add_subplot(324)#sspec
             a5=self.f.add_subplot(326)#second
-        else:
+        elif plot_first:
             a2=self.f.add_subplot(223)
             a3=self.f.add_subplot(222)
             a4=self.f.add_subplot(224)
+        else:
+            a2=self.f.add_subplot(212)
+            a3=self.f.add_subplot(222)
 
         aratio=0.5*self.order.shape[1]/float(self.order.shape[0])
         a1=jFits.jDisplay(self.order,figure=self.f,subplot=221,log=True,aspect=aratio,show=show)
@@ -168,24 +216,38 @@ class order:
             a2.set_ylim(*lims)
             
 
-        a3.hist(np.arange(len(self.profile[self.bot:self.top]))+self.bot,\
-                      weights=self.profile[self.bot:self.top],\
-                      bins=len(self.profile[self.bot:self.top]),\
+        #a3.hist(np.arange(len(self.profile[self.bot:self.top]))+self.bot,\
+        #              weights=self.profile[self.bot:self.top],\
+        #              bins=np.arange(len(self.profile[self.bot:self.top]))+self.bot,\
+        #              edgecolor='k',\
+        #              facecolor='none')
+       # a3.plot(range(len(self.fit_prof)),m[self.bot:self.top])
+        a3.hist(np.arange(len(self.profile))-0.5,\
+                      weights=self.profile,\
+                      bins=np.arange(len(self.profile)+1)-0.5,\
                       edgecolor='k',\
                       facecolor='none')
-       # a3.plot(range(len(self.fit_prof)),m[self.bot:self.top])
 
+        a3.set_xlim(-0.5,len(self.profile))
+        a3_xlims=a3.get_xlim()
+        a3_ylims=a3.get_ylim()
         self.g=[]
         for i in xrange(self.nsources):
             self.g.append(
                 gaussfitter.onedgaussian(
                     np.arange(len(self.profile[self.bot:self.top]))+self.bot,0,*self.p[3*i:3*(1+i)]))
             a3.plot(np.arange(len(self.profile[self.bot:self.top]))+self.bot,self.g[-1],color=colors[i])
+        if plot_extract_range:
+            for r in self.extract_ranges:
+                a3.vlines([rr-0.5 for rr in r],*a3_ylims,linestyle='--',color='r')
+        a3.set_ylim(a3_ylims)
+        a3.set_xlim(a3_xlims)
 
-        for src in xrange(self.nsources):
-            a4.plot(self.spatial[:,src],color=colors[src])
-        a4.set_xlim(0,self.spatial.shape[0])
-        a4.set_ylim(self.spatial.mean(axis=0).min()-0.5,self.spatial.mean(axis=0).max()+0.5)
+        if plot_first:
+            for src in xrange(self.nsources):
+                a4.plot(self.spatial[:,src],color=colors[src])
+            a4.set_xlim(0,self.spatial.shape[0])
+            a4.set_ylim(np.median(self.spatial,axis=0).min()-0.5,np.median(self.spatial,axis=0).max()+0.5)
 
         if plot_second:
             for src in xrange(self.nsources):
@@ -201,10 +263,11 @@ class order:
 
         a1.set_title('Order Image')
         a2.set_title('Flux Spectrum')
-        a3.set_title('Order profile')
-        a4.set_title('Astrometric spectrum')
+        a3.set_title('Order profile, profile length=%i'%len(self.profile))
+        if plot_first:
+            a4.set_title('Astrometric spectrum')
         if save_summary_fig_name:
-            f.savefig(save_summary_fig_name)
+            self.f.savefig(save_summary_fig_name)
 
     def adjust_order_lims(self,lims):
         if len(lims) == 2:
@@ -235,7 +298,7 @@ class order:
         ''' save must be one of "flux", "spatial", "profile", "sigma", or "second"'''
         dat_dict={'flux':self.spectrum,
                   'spatial':self.spatial,
-                  'profile':self.profile,
+                  'profile':self.profile[:,None],
                   'sigma':self.sigma,
                   'second':self.sigma}
         key=[k for k in dat_dict.keys() if k.startswith(save)][0]

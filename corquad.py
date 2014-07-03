@@ -49,7 +49,7 @@ def get_hot_pix(d,max_pixels=100):
 
 def vet_hot_pix(hotx,hoty,d):
     f=mpl.figure(figsize=(5,5))
-    imax=jFits.jDisplay(d,figsize=(5,5),log=True,color_scale='gray')
+    imax=jFits.jDisplay(d,figsize=(5,5),log=True,cmap='gray')
     cool=map(locate_cool,hotx,hoty)
     hot_qual=[]
     ghotx=[]
@@ -63,7 +63,7 @@ def vet_hot_pix(hotx,hoty,d):
         imax.set_xlim(0,1023)
         imax.set_ylim(0,1023)
         a=d[point[0]-9:point[0]+9,point[1]-9:point[1]+9]
-        ax=jFits.jDisplay(a,log=True,figure=f,subplot=221,color_scale='gray')
+        ax=jFits.jDisplay(a,log=True,figure=f,subplot=221,cmap='gray')
         ax.set_title('bright')
         mpl.show()
         for i, p in enumerate(point[2]):
@@ -78,7 +78,7 @@ def vet_hot_pix(hotx,hoty,d):
                                log=True,\
                                figure=f,\
                                subplot='22%i' %(i+2),\
-                               color_scale='gray')
+                               cmap='gray')
             ax2.set_title('dark')
             mpl.show()
         print 'Hows it look (1/0)?'

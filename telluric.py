@@ -51,13 +51,19 @@ def rotationally_broaden(wavelengths,fluxes,vsini):
     
 def vgeo(strdate,ra,dec,vhel=0):
     '''strdate like yyyy-mm-dd[Thh[:mm[:ss]]]
-    vhel in  m/s
-    returns m/s'''
+    vhel in  km/s
+    returns km/s'''
     dt=sidereal.parseDatetime(strdate)
     jd_obj=sidereal.JulianDate.fromDatetime(dt)
     x,v=earth_pos_vel(float(jd_obj))
-    v*=1000.#m/s
     vgeo=v[0]*np.cos(dec)*np.cos(ra)+\
          v[1]*np.cos(dec)*np.sin(ra)+\
          v[2]*np.sin(dec)
     return vhel-vgeo
+
+
+def correct(sx,sy,tx,ty,return_inds=False): 
+    ave=sy.mean()
+    telluric_func=interp1d(tx,ty,bounds_error=False,fill_value=ave) 
+    return sy/telluric_func(sx) 
+

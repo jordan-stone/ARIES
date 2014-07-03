@@ -10,8 +10,29 @@ import gaussfitter
 mpl.ion()
 
 __all__=['readcol','subprocess','os','jFits','poly2d','gauss_func','gaussfitter',\
-         'griddata','mpl','ma','np','smooth_climb','climb','get_gauss','unzip']
+         'griddata','mpl','ma','np','smooth_climb','climb','get_gauss','unzip',\
+         'Features']
 
+speed_of_light=float(299792458)#m/s
+
+class Features:
+    def __init__(self):
+        self.Rydberg=1.0973731569e7#m^-1
+        self.lines={'CO_bandheads':np.array([2.2936,2.3227,2.3527,2.38298]),
+                    'NIR_Brackett':np.array(map(self.Brackett,xrange(5,20))),
+                    'H2':1e4/np.array([4917.,4713.,4498.])}
+        all_lines=[]
+        for k in self.lines.keys():
+            all_lines.extend(self.lines[k].tolist())
+        self.lines['all_lines']=np.array(all_lines)
+    def Brackett(self,upper):
+        inv_lambda=self.Rydberg*((1/16.)-(1/float(upper)**2))
+        return (1/inv_lambda)*1.e6
+    def redshift(self,velocity):
+        self.__init__()
+        for k in self.lines.keys():
+            self.lines[k]=(1+velocity/speed_of_light)*self.lines[k]
+        
 def gauss_func(mu,sigma):#build a function...
     return lambda x: np.exp(-0.5*( (x-mu)**2. / sigma**2. ))
 

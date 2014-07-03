@@ -1,5 +1,6 @@
 from ARIES import *
 lines=readcol('/home/jstone/my_python/ARIES/transdata_1_5_mic',colNames=['wn','A'])
+#lines=readcol('/home/jstone/Research/2m1207b/cerro_pachon_atmosphere/cptrans_zm_43_10.dat',colNames=['w','A'])
 lines['w']=1.e4/lines['wn']
 #precision of atmos cat
 #since lines['w'] is a descending array, 
@@ -11,8 +12,12 @@ def get_lines(wave_lims):
     inds=np.logical_and(lines['w']>wave_lims[0],lines['w']<wave_lims[1])
 
     #make sure wavelengths are increasing
-    l=lines['w'][inds][::-1]
-    A=lines['A'][inds][::-1]
+    if lines['w'][-1] < lines['w'][0]:
+        l=lines['w'][inds][::-1]
+        A=lines['A'][inds][::-1]
+    else:
+        l=lines['w'][inds]
+        A=lines['A'][inds]
 
     wave_lengths=np.arange(l.min(),(l.max()+minstep),minstep)
 
@@ -34,6 +39,23 @@ def resids(obs_spec,sky_spec):
     obs_x,obs_y=obs_spec
     sky_x,sky_y=sky_spec
     return obs_y - np.interp(obs_x,sky_x,sky_y)
+
+def get_smoothed_lines(wave_lims,**kern_args):
+
+    inds=np.logical_and(lines['w']>wave_lims[0],lines['w']<wave_lims[1])
+
+    #make sure wavelengths are increasing
+    l=lines['w'][inds][::-1]
+    A=lines['A'][inds][::-1]
+
+    wave_lengths=np.arange(l.min(),(l.max()+minstep),minstep)
+    delta_spec=np.interp(wave_lengths,l,A)
+
+    g=make_gauss_kern(len(wave_lengths),**kern_args)
+    out=smooth(delta_spec,g)
+
+    return (wave_lengths,out.real)
+
     
 def mpFunc(obs_spec,sky_spec):
     def f(p,fjac=None):
@@ -145,7 +167,7 @@ class pick_corresponding_lines:
         self.x=np.polyval(self.transform_coefficients,self.obs_spec[0])
         self.y=self.obs_spec[1]/self.obs_spec[1].mean()
     
-def do_calibration(file_name,dlamb=0.035,low_lamb=2.15,write=True,offset=0.4,h=[],iter=True,trim=False):
+def do_calibration(file_name,dlamb=0.035,low_lamb=2.15,write=True,offset=0.4,h=[],iter=True,trim=False,**kernkw):
 
     d=readcol(file_name,colNames=['p','f'])
     if trim:
@@ -156,8 +178,8 @@ def do_calibration(file_name,dlamb=0.035,low_lamb=2.15,write=True,offset=0.4,h=[
         obsy=d['f']
 
     if len(h) ==0:
-        xl=get_lines((low_lamb-0.001,low_lamb+dlamb+0.003))
-        g=make_gauss_kern(len(xl[0]))
+        xl=get_lines((low_lamb-0.005,low_lamb+dlamb+0.005))
+        g=make_gauss_kern(len(xl[0]),**kernkw)
         out=smooth(xl[1],g)
         sky=(xl[0],out.real)
 
@@ -166,8 +188,8 @@ def do_calibration(file_name,dlamb=0.035,low_lamb=2.15,write=True,offset=0.4,h=[
         a0=low_lamb
         h=[a2,a1,a0]
     else:
-        xl=get_lines(np.polyval(h,(-50,1080)))
-        g=make_gauss_kern(len(xl[0]))
+        xl=get_lines(np.polyval(h,(-100,1100)))
+        g=make_gauss_kern(len(xl[0]),**kernkw)
         out=smooth(xl[1],g)
         sky=(xl[0],out.real)
 
@@ -202,6 +224,75 @@ def do_calibration(file_name,dlamb=0.035,low_lamb=2.15,write=True,offset=0.4,h=[
     print tot_transform
     if write:
         fo=open('wavelength_soln.txt','w')
+        fo.write('#wavelength transform: \n')
+        fo.write('#%s\n' % tot_transform)
+        fo.write('#coefficents:\n')
+        fo.write(('#%e '*len(tot_transform.c))%tuple(tot_transform.c))
+        fo.write('#\n')
+        fo.write('#pix,lam (mu)\n')
+        for pp in zip(d['p'],tot_transform(d['p'])):
+            fo.write('%i %f\n' % pp)
+        fo.close()
+    return d['p'],tot_transform(d['p'])
+
+def do_binary_calibration(file_name,dlamb=0.035,low_lamb=2.15,write=True,offset=0.4,h=[],iter=True,trim=False,source=1):
+    print file_name
+    d=readcol(file_name,colNames=['p','f1','f2'])
+    if trim:
+        obsx=d['p'][trim:-trim]
+        obsy=(d['f1'][trim:-trim],d['f2'][trim:-trim])
+    else:
+        obsx=d['p']
+        obsy=(d['f1'],d['f2'])
+
+    if len(h) ==0:
+        xl=get_lines((low_lamb-0.001,low_lamb+dlamb+0.003))
+        g=make_gauss_kern(len(xl[0]))
+        out=smooth(xl[1],g)
+        sky=(xl[0],out.real)
+
+        a2=0.0
+        a1=dlamb/float(max(d['p']))
+        a0=low_lamb
+        h=[a2,a1,a0]
+    else:
+        xl=get_lines(np.polyval(h,(-150,1180)))
+        g=make_gauss_kern(len(xl[0]))
+        out=smooth(xl[1],g)
+        sky=(xl[0],out.real)
+
+    oy=obsy[source-1]
+    denom=max(oy.mean(),1.)
+    obs=(np.polyval(h,obsx),oy/denom+offset)
+    lamcal=pick_corresponding_lines(sky,obs)
+
+    if iter:
+        print 'press enter when done to iterate once...'
+        foo=raw_input()
+
+        obs2=(lamcal.x.copy(),lamcal.y+offset/4.)
+
+        xl=get_lines((lamcal.x[0]-0.001,lamcal.x[-1]+0.001))
+        g=make_gauss_kern(len(xl[0]))
+        out=smooth(xl[1],g)
+        sky=(xl[0],out.real)
+
+        lamcal2=pick_corresponding_lines(sky,obs2)
+
+        print 'press enter when done ...'
+        foo=raw_input()
+        tot_transform=np.poly1d(lamcal2.transform_coefficients)(np.poly1d(lamcal.transform_coefficients)(np.poly1d(h)))
+    else:
+        print 'press enter when done'
+        foo=raw_input()
+        tot_transform=np.poly1d(lamcal.transform_coefficients)(np.poly1d(h))
+
+    print 'transform coefficients:'
+    print tot_transform.c
+    print 'transform pretty print:'
+    print tot_transform
+    if write:
+        fo=open('wavelength_soln%i.txt'%source,'w')
         fo.write('#wavelength transform: \n')
         fo.write('#%s\n' % tot_transform)
         fo.write('#coefficents:\n')

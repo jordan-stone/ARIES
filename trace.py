@@ -1,7 +1,7 @@
 from ARIES import *
 from ARIES.trace import *
 
-def sniff_lamp_traces(fileNameList,method='mean'):
+def sniff_lamp_traces(fileNameList,method='mean',smooth_width=10.5):
     dataList=np.array(map(lambda x:jFits.get_fits_array(x)[1],fileNameList))
     if method=='mean':
         sumd=dataList.sum(axis=0)
@@ -13,12 +13,14 @@ def sniff_lamp_traces(fileNameList,method='mean'):
 
     kern=np.zeros_like(sumd)
     sh=kern.shape
-    kern[sh[0]/2.-2.5:sh[0]/2.+2.5,sh[1]/2.-2.5:sh[1]/2.+2.5]=1.
+    kern[sh[0]/2.-smooth_width:sh[0]/2.+smooth_width,
+         sh[1]/2.-smooth_width:sh[1]/2.+smooth_width]=1.
     d=(np.fft.fftshift(np.fft.ifft2(np.fft.fft2(sumd)*np.fft.fft2(kern)))).real
+    jFits.jInteractive_Display(d)
     col_maxes={}
-    for column in xrange(4,1020,1):
+    for column in xrange(min(4,d.shape[1]),max(0,d.shape[1]-4),1):
         peaks={}
-        for p0 in np.arange(4,1020,2):
+        for p0 in xrange(min(4,d.shape[0]),max(0,d.shape[0]-4),2):
             peak=climb(int(p0),d[:,column])
             peaks[peak]=p0
 
@@ -110,6 +112,61 @@ def tmp(arr,method='mean'):
         x,y=unzip(r)
         ax.plot(x,y,'r-')
         ax.text(x[5],y[5],'%i' % ii,color='r')
+        ax.set_title('longest 27 traces')
+        ax.set_xlim(0,1023)
+        ax.set_ylim(0,1023)
+    mpl.show()
+    return tr_zip
+
+def sniff_lamp_traces2(arr,method='mean',smooth_width=10.5):
+    kern=np.zeros_like(arr)
+    sh=kern.shape
+    kern[sh[0]/2.-smooth_width:sh[0]/2.+smooth_width,
+         sh[1]/2.-smooth_width:sh[1]/2.+smooth_width]=1.
+    d=(np.fft.fftshift(np.fft.ifft2(np.fft.fft2(arr)*np.fft.fft2(kern)))).real
+    jFits.jInteractive_Display(d)
+    col_maxes={}
+    for column in xrange(min(4,d.shape[1]),max(0,d.shape[1]-4),1):
+        peaks={}
+        for p0 in xrange(min(4,d.shape[0]),max(0,d.shape[0]-4),2):
+            peak=climb(int(p0),d[:,column])
+            peaks[peak]=p0
+
+        col_maxes[column]=sorted(peaks.keys())
+
+    columns=sorted(col_maxes.keys())
+
+    traces=[[(r,columns[0])] for r in col_maxes[columns[0]]]
+    for c in columns[1:]:
+        sort_temp=[]
+        new=[]
+        for y in col_maxes[c]:
+            x_arr=np.array([r[-1][0] if np.abs(r[-1][1]-c) < 15 else 9999 for r in traces] )
+            dif=np.abs(x_arr-y)
+            if np.min(dif) < 4:
+                sort_temp.append(((y,c),(dif==np.min(dif)).nonzero()[0][0]))
+            else:
+                new.append([(y,c)])
+        for found in sort_temp:
+            traces[found[1]].append(found[0])
+        for n in new:
+            traces.append(n)
+
+    ax=jFits.jDisplay(d,figsize=(11,11))
+
+    tr=sorted(traces,key=len)
+    tr_zip=[]
+    for r in tr:
+        x=[x[1] for x in r]
+        y=[y[0] for y in r]
+        tr_zip.append(zip(x,y))
+
+
+    for ii,r in enumerate(tr_zip[-27:]):
+        print ii
+        x,y=unzip(r)
+        ax.plot(x,y,'r-')
+        ax.text(x[10],y[10],'%i' % ii,color='r')
         ax.set_title('longest 27 traces')
         ax.set_xlim(0,1023)
         ax.set_ylim(0,1023)
@@ -249,12 +306,24 @@ def read_traces(fname,offset=0):
             orders.append(zip(d['x'],d['y']))
     return orders
 
+def simple_sniff(im,start_point):
+    sh=im.shape
+    point_list=[start_point]
+    for column in xrange(start_point[0],min(start_point[0]+300,im.shape[1]-4)):
+        peak=smooth_climb(point_list[-1][1],im=im,column=column,kernlength=5)
+        point_list.append([column,peak])
+    return point_list
+
+
 def get_trace_vals(im,traces,offset=0):
     spects=[]
     for t in traces:
         s=[im[max(min(xy[1]+offset,1023),0),max(min(xy[0],1023),0)] for xy in t]
         spects.append(np.array(s))
     return spects
+
+def trace_av(trace):
+    return sum(get_trace_vals(im,[trace])[0])/float(len(trace))
 
 def double_trace(single_traces,separation):
     second_traces=[]
@@ -268,6 +337,12 @@ def transpose_trace(t):
     x,y=unzip(t)
     return zip(y,x)
 
+def plot_traces(axis,traces,**plotkw):
+    for t in traces:
+        x,y=unzip(t)
+        axis.plot(x,y,**plotkw)
+    mpl.show()
+    
 
 def unroll_trace(trace,onto_xy='x',degree=2):
     x,y=unzip(trace)
