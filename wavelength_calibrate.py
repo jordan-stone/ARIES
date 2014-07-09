@@ -1,16 +1,19 @@
 from ARIES import *
-lines=readcol('/home/jstone/my_python/ARIES/transdata_1_5_mic',colNames=['wn','A'])
-#lines=readcol('/home/jstone/Research/2m1207b/cerro_pachon_atmosphere/cptrans_zm_43_10.dat',colNames=['w','A'])
+lines=readcol('transdata_1_5_mic',colNames=['wn','A'])
 lines['w']=1.e4/lines['wn']
-#precision of atmos cat
-#since lines['w'] is a descending array, 
-#the max diff will be the smallest diff (all vals of diff will be neg)
 minstep=-(np.diff(lines['w']).max())
 
 def get_lines(wave_lims):
-
+    '''from the high-resolution transmission spectrum, grab the spectral
+    region of interest and interpolate it onto a regular grid, with the
+    minimum gridspacing present in the spectrum
+    Input:
+    wave_lims -[len=2 tuple] the low and high wavelength limits of interest
+                             in microns
+    Returns:
+    len=2 tuple the zeroeth element is the wavelength array, the first
+    element is the transmission spectrum array'''
     inds=np.logical_and(lines['w']>wave_lims[0],lines['w']<wave_lims[1])
-
     #make sure wavelengths are increasing
     if lines['w'][-1] < lines['w'][0]:
         l=lines['w'][inds][::-1]
@@ -18,14 +21,24 @@ def get_lines(wave_lims):
     else:
         l=lines['w'][inds]
         A=lines['A'][inds]
-
     wave_lengths=np.arange(l.min(),(l.max()+minstep),minstep)
-
     delta_spec=np.interp(wave_lengths,l,A)
-
     return (wave_lengths,delta_spec)
 
 def make_gauss_kern(array_length,R=30000.,central_lambda=2.,minstep=minstep):
+    '''make a gaussian shaped kernel for smoothing from a resolution of infinity
+    to a resolution of R.
+    Inputs:
+    array_length -[int] the length of the array of the spectrum to be smoothed
+    R            -[float] the resolution to smooth to assuming an input resolution
+                          of infinity.
+    central_lambda-[float] the central wavelength (in microns) of the array to be
+                           smoothed
+    minstep       -[float] the minimum wavelength stepsize of the array to be smoothed
+    Returns:
+    1-d array of len=array_length, a normalized gaussian kernel with width appropriate
+    to smooth a resolution of infinity to R
+    '''
     delta_lambda=central_lambda/R
     sig=0.5*delta_lambda/minstep
     x=np.arange(array_length)
@@ -33,39 +46,43 @@ def make_gauss_kern(array_length,R=30000.,central_lambda=2.,minstep=minstep):
     return g/g.sum()
 
 def smooth(lines,kernel):
+    '''Convolve a spectrum with a kernel, no padding is performed.
+    spectrum and kernel should have same length.
+    Inputs:
+    lines -[1d array] the input spectrum
+    kernel-[1d array] the smoothing kernel the same length as lines
+    Returns:
+    1d array (complex), ifft(fft(lines)*fft(kernel))
+    '''
     return np.fft.fftshift( np.fft.ifft( np.fft.fft(lines) * np.fft.fft(kernel) ) )
 
-def resids(obs_spec,sky_spec):
-    obs_x,obs_y=obs_spec
-    sky_x,sky_y=sky_spec
-    return obs_y - np.interp(obs_x,sky_x,sky_y)
-
 def get_smoothed_lines(wave_lims,**kern_args):
-
+    '''Return the telluric transmission spectrum between wave_lims,
+    and smooth with a gaussian kernel.
+    Inputs:
+    wave_lims -[len=2 tuple]the low and high wavelength limits of interest
+                            in microns.
+    **kern_args - keywords passed to make_gauss_kern
+    Returns:
+    len=2 tuple, the zeroeth element is the wavelength array. The first
+    element is the smoothed telluric absorption spectrum.
+    '''
     inds=np.logical_and(lines['w']>wave_lims[0],lines['w']<wave_lims[1])
-
     #make sure wavelengths are increasing
     l=lines['w'][inds][::-1]
     A=lines['A'][inds][::-1]
-
     wave_lengths=np.arange(l.min(),(l.max()+minstep),minstep)
     delta_spec=np.interp(wave_lengths,l,A)
-
     g=make_gauss_kern(len(wave_lengths),**kern_args)
     out=smooth(delta_spec,g)
-
     return (wave_lengths,out.real)
 
     
-def mpFunc(obs_spec,sky_spec):
-    def f(p,fjac=None):
-        obs_x,obs_y=obs_spec
-        obs_y=obs_y/obs_y.mean()
-        sky_x,sky_y=sky_spec
-        return [0,obs_y-np.interp( np.polyval(p,obs_x) ,sky_x, sky_y, left=0.0, right=0 )]
-    return f
-
 class pick_corresponding_lines:
+    '''This class implements a graphical interface for associating lines in an
+    observed spectrum and a template spectrum. You will click the lines, starting
+    by clicking a line in the observed spectrum, then the corresponding line in the
+    template spectrum.'''
     def __init__(self,sky_spec,obs_spec):
         self.sky_spec=sky_spec
         self.obs_spec=obs_spec
@@ -168,7 +185,27 @@ class pick_corresponding_lines:
         self.y=self.obs_spec[1]/self.obs_spec[1].mean()
     
 def do_calibration(file_name,dlamb=0.035,low_lamb=2.15,write=True,offset=0.4,h=[],iter=True,trim=False,**kernkw):
-
+    '''implement wavelength_calibrate.pick_corresponding_lines and return the transformed x-axis values
+    (i.e. return an array that has been mapped from pixels to microns...)
+    Inputs:
+    file_name -[str] the file name containing the observed spectrum col0=pixel value col1=flux
+    dlamb     -[float] a guess at the width of the order in microns
+    low_lamb  -[float] a guess at the smallest wavelength in the order
+    write     -[bool] if True the wavelength solution will be written to a file 
+                      named 'wavelength_soln.txt'
+    offset    -[float] a vertical offset so that you can see both spectra
+    h         -[list, default=[]] if you want, you can supply coefficients for a 
+                                  preliminary 2nd degree polynomial shift which
+                                  may help align the spectra so you can identify similar 
+                                  lines in both.
+    iter      -[bool] if True, you will pick_corresponding_lines twice, this may help you
+                      notice some lines you missed in the first pass (since the spectra will 
+                      be better aligned the second time)
+    trim      -[int] trim the ends of the observed spectrum by trim pixels.
+    **kernkw  -keywords fed to wavelength_calibrate.make_gauss_kern
+    Returns:
+    len=2 tuple, zeroeth element is the pixel array, 1st element is the wavelength array.
+    '''
     d=readcol(file_name,colNames=['p','f'])
     if trim:
         obsx=d['p'][trim:-trim]
@@ -236,6 +273,10 @@ def do_calibration(file_name,dlamb=0.035,low_lamb=2.15,write=True,offset=0.4,h=[
     return d['p'],tot_transform(d['p'])
 
 def do_binary_calibration(file_name,dlamb=0.035,low_lamb=2.15,write=True,offset=0.4,h=[],iter=True,trim=False,source=1):
+    '''Same as wavelength_calibrate.do_calibration but assumes that the file has
+    three columns col0=pixel, col1=flux_star1, col2=flux_star2. You will
+    wavelength_calibrate.pick_corresponding_lines for each
+    '''
     print file_name
     d=readcol(file_name,colNames=['p','f1','f2'])
     if trim:

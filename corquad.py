@@ -1,5 +1,15 @@
 from ARIES import *
 def locate_cool(x,y):
+    '''Find the cold pixels in the 3 other
+    quadrants given a hot-pixel position
+    Inputs:
+    x - the x coordinate of hot pixel
+    y - the y coordinate of hot pixel
+    Returns:
+    tuple - a len=3 tuple of len=2 tuples that
+            are each the x,y location of a cold
+            pixel
+    '''
     if x > 512:
         xadd=-512
     else:
@@ -11,10 +21,25 @@ def locate_cool(x,y):
     return ((y,x+xadd),(y+yadd,x+xadd),(y+yadd,x))
 
 def median_darks(darkList):
+    '''median filter several ARIES images
+    Inputs:
+    darkList - [list, str] a list of filenames
+    Returns:
+    2d array - the median image
+    '''
     dataL=np.array(map(lambda x:(jFits.get_fits_array(x))[1],darkList))
     return np.median(dataL,axis=0)
 
 def get_hot_pix(d,max_pixels=100):
+    '''Automatically find a set of hot pixels
+    Inputs:
+    d          -[2d Array] the dark image
+    max_pixels -[int,default 100] 
+    Returns:
+    tuple - a len=2 tuple of numpy arrays. The zeroeth
+            element is an array of x-coordinates, the
+            first element is an array of y-coordinates
+    '''
     hot=np.where(d>np.median(d)+5*np.std(d))
 
     #indsa=np.logical_and(hot[0]>256,hot[0]<502)
@@ -48,6 +73,20 @@ def get_hot_pix(d,max_pixels=100):
     return hotx, hoty
 
 def vet_hot_pix(hotx,hoty,d):
+    '''from a large set of hot pixels, identify a sub-set
+    of very-hot and isolated pixels that will be best for
+    calculating the corquad coefficients. You will loop
+    through each hot pixel and view it and it's cross
+    talk images.
+    Inputs:
+    hotx - [1d array] an array of x-coordinates
+    hoty - [1d array] an array of y-coordinates
+    d    - [2d array] the image
+    Returns:
+    tuple - a len=2 tuple, the zeroeth element is an array
+            of x-coordinates, the first element is an array of 
+            y-coordinates
+    '''
     f=mpl.figure(figsize=(5,5))
     imax=jFits.jDisplay(d,figsize=(5,5),log=True,cmap='gray')
     cool=map(locate_cool,hotx,hoty)
@@ -100,6 +139,14 @@ def vet_hot_pix(hotx,hoty,d):
     return ghotx, ghoty
 
 def make_corquad(hotx,hoty,d):
+    '''Calculate the corquad coefficients.
+    Inputs: 
+    hotx - [1d array] x-coordinates of hot pixels
+    hoty - [1d array] y-coordinates of hot pixels
+    d    - [2d array] the image
+    Return:
+    tuple - a len=3 tuple with the 0th, 1st, and 2nd corquad coefficients
+    '''
     cool=map(locate_cool,hotx,hoty)
     kern0=[]
     kern1=[]
@@ -134,6 +181,13 @@ def make_corquad(hotx,hoty,d):
     return np.mean(kern0), np.mean(kern1), np.mean(kern2)
 
 def do_make_corquad(darkList):
+    '''Combine corquad.median_darks, corquad.get_hot_pix, corquad.vet_hot_pix
+    and corquad.make_corquad.
+    Inputs:
+    darkList - [list, str] a list of dark image filenames
+    Returns:
+    tuple - a len=3 tuple with the 0th, 1st, and 2nd corquad coefficients
+    '''
     d=median_darks(darkList)
     hotx,hoty=get_hot_pix(d)
     goodx, goody=vet_hot_pix(hotx,hoty,d)
@@ -144,8 +198,30 @@ def do_make_corquad(darkList):
     return make_corquad(goodx, goody,d)
     
 
-def corquad_grid(kern_mu_sig,btlr_box,fname):
-    params=readcol("/home/jstone/.corquad_backup",\
+def corquad_grid(kern_mu_sig,btlr_box,fname,
+                 cor_coefs_file="/home/jstone/.corquad_backup",
+                 write_dot_corquad_file='/home/jstone/writeDotCorquad.sh',
+                 corquad_executable_file='/home/jstone/corquad-linux'):
+    '''fit for the best corquad coeficients using a grid-based approach
+    Inputs:
+    kern_mu_sig            - a len=3 tuple. Each element is a len=2 tuple including 
+                             a good guess of the mean and std of the corquad coefficient 
+                             value. These values will define the range of the grid, which 
+                             will go from mu+/std for each coefficient
+    btlr_box               - the bottom, top, left, and right extents of
+                             a sub-array the standard deviation of which will be the 
+                             figure of merit for the fit. (usually want to put this around
+                             a cool pixel...)
+    fname                  - the filename of the dark image the fit will be run on
+    cor_coefs_file_backup  - the file name of a file containing the original corquad coefficients
+    write_dot_corquad_file - path to the writeDotCorquad.sh executable
+    cor_coefs_file         - path to the ".corquad" file that the corquad executable will read
+    corquad_executable_file- path to the corquad executable.
+    Returns:
+    None                    - will print the 10 best sets of coefficients...
+
+    '''
+    params=readcol(cor_coefs_file_backup,\
                    colNames=['name','value'],format=['a','f'])
     bname='q'+os.path.basename(fname)
     qname=os.path.join(os.path.dirname(fname)+bname)
@@ -170,10 +246,10 @@ def corquad_grid(kern_mu_sig,btlr_box,fname):
                 "%s %s" % (params['name'][5], str(kern0)),\
                 "%s %s" % (params['name'][6], str(kern1)),\
                 "%s %s" % (params['name'][7], str(kern2)) ]
-                subprocess.check_call(["/home/jstone/writeDotCorquad.sh",\
-                                       "/home/jstone/.corquad"]+\
+                subprocess.check_call([write_dot_corquad_file,\
+                                       cor_coefs_file]+\
                                        args)
-                subprocess.check_call(["/home/jstone/bin/corquad-linux",\
+                subprocess.check_call([corquad_executable_file,\
                                        fname])
                 h,d=jFits.get_fits_array(qname)
                 devs[(kern0,kern1,kern2)]=np.std(d[btlr_box[0]:btlr_box[1],\

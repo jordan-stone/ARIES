@@ -127,12 +127,40 @@ def ccm_deredden(microns,flux,Av,Rv=3.1):
     return flux*10.**(0.4*A_lambda)     
 
 def make_inds(w_arr,windows):
+    '''
+    Inputs:
+    w_arr   - [1d array] an array of wavelengths
+    windows - [list of tuples] each tuple defines the lower and upper
+                               extent (in units of w_arr) of a window
+    Returns:
+    1d array - indices of w_arr which are within windows are set to 1
+               0 otherwise
+    '''
     inds=[]
     for interval in windows:
         inds.append(np.logical_and(w_arr>interval[0],w_arr<interval[1]))
     return np.any(inds,axis=0)
 
-def grid_veil_fit(obs_spec, model_spec_path, shift_stepsize, shift_total_size,windows=[(0,np.inf)]):
+def grid_veil_fit(obs_spec, model_spec_path, shift_stepsize, shift_total_size,
+                  template_glob='phoenix_model*.dat',windows=[(0,np.inf)]):
+    '''
+    Determine the necessary shift in wavelength necessary to align a template spectrum 
+    and an observed spectrum
+    Inputs:
+    obs_spec        -[str] filename of observed spectrum (col0 is wavelength, col1 is flux)
+    model_spec_path -[str] the path to the photospheric spectra files. Each file in this 
+                           dir should have col0 wavelength and col1 flux
+    shift_stepsize  -[float] the step size to use while gridding (only steps in one 
+                             direction...)
+    shift_total_size-[float] the total amount to shift during the fitting process.
+    template_globe  -[str] a glob string that identifies all of the desired template
+                           datafiles in model_spec_path
+    windows         -[list of tuples] to be fed to analysis.make_inds. These are 
+                                      windows around spectral features that the fitter will use
+                                      while generating it's figure of merit value...
+    Returns:
+    None            - prints the best fit model name and shift
+    '''
     spec=readcol(obs_spec,colNames=['w','f'])
     inds=make_inds(spec['w'],windows)
     model_photospheres={}
@@ -154,6 +182,18 @@ def grid_veil_fit(obs_spec, model_spec_path, shift_stepsize, shift_total_size,wi
     print skeys[0]
 
 def get_ew(obs_spec,int_limits):
+    '''return the equivalent width of a spectral feature inside
+    the provided integration limits. The continuum level is 
+    calculated as the mean outside the integration limits.
+    Inputs:
+    obs_spec   -[len=2 tuple] zeroeth element is the wavelength array
+                             first element is the flux array
+    int_limits -[len=2 tuple] the lower and upper limits (in wavelength
+                              units).
+    Returns:
+    float      -the equivalent width (in the same units as the wavelength
+                array) of the spectral feature within int_limits...
+    '''
     w=obs_spec[0]
     f=obs_spec[1]
     inside=np.logical_and(w>int_limits[0],w<int_limits[1])
@@ -161,6 +201,18 @@ def get_ew(obs_spec,int_limits):
     return ((1-f[inside]/f0)*np.diff(w[inside]).mean()).sum()
 
 def get_ew_median(obs_spec,int_limits):
+    '''return the equivalent width of a spectral feature inside
+    the provided integration limits. The continuum level is 
+    calculated as the median outside the integration limits.
+    Inputs:
+    obs_spec   -[len=2 tuple] zeroeth element is the wavelength array
+                             first element is the flux array
+    int_limits -[len=2 tuple] the lower and upper limits (in wavelength
+                              units).
+    Returns:
+    float      -the equivalent width (in the same units as the wavelength
+                array) of the spectral feature within int_limits...
+    '''
     w=obs_spec[0]
     f=obs_spec[1]
     inside=np.logical_and(w>int_limits[0],w<int_limits[1])

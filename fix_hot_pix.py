@@ -2,6 +2,13 @@ from ARIES import *
 from ARIES.corquad import get_hot_pix
 
 def fix_hots(arr,p):
+    '''ARIES hot pixels look like crosshairs. Try to fix them
+    Inputs:
+    arr -[2d array] the image
+    p   -[len=2 tuple] the point
+    Returns:
+    None, but updates arr...
+    '''
     stamp=arr[p[0]-1:p[0]+2,p[1]-1:p[1]+2]
     copy=stamp.copy()
     flat_copy=copy.view().reshape(9)
@@ -17,6 +24,19 @@ def fix_hots(arr,p):
     stamp[:,:]=copy
 
 def do_fix_hots(dark,sci,returnhots=False):
+    '''Find and fix the hot pixels in an image using a dark image
+    as a reference. Optionally return the location of the hotpixels
+    Inputs:
+    dark -[2d array] the dark image
+    sci  -[2d array] the science image (echellogram)
+    returnhots -[bool] if True, the hot pixels will be 
+                       returned in a list of len=2 tuples.
+    Returns:
+    None but updates sci
+    or
+    updates sci and returns a list of len=2 tuples, the coordinates
+    of the hot pixels
+    '''
     hotx,hoty=get_hot_pix(dark,max_pixels=1e6)    
     hotxr=hotx+1
     hots=zip(hotx,hoty)
