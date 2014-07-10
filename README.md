@@ -14,7 +14,7 @@ The dependencies that I know of the top of my head are these:
     - scipy,
     - matplotlib,
     - poly2d (requires cython, https://github.com/tkanmae/polynomial2d, It seems that
-    - this project has changed it's name, so that's probably bad...),
+              this project has changed it's name, so that's probably bad...),
     - astropysics (https://github.com/eteq/astropysics),
     - sidereal (http://infohost.nmt.edu/tcc/help/lang/python/examples/sidereal/),
     - pyfits
