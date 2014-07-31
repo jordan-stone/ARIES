@@ -1,5 +1,7 @@
 from ARIES import *
-lines=readcol('transdata_1_5_mic',colNames=['wn','A'])
+import os
+pathname,filename=os.path.split(__file__)
+lines=readcol(os.path.join(pathname,'transdata_1_5_mic'),colNames=['wn','A'])
 lines['w']=1.e4/lines['wn']
 minstep=-(np.diff(lines['w']).max())
 
